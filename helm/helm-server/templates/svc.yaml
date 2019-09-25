@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
+  name: "{{ template "percona.fullname" . }}-nodes"
+  labels:
+    app: {{ template "percona.fullname" . }}
+    chart: "{{ .Chart.Name }}-{{ .Chart.Version }}"
+    release: "{{ .Release.Name }}"
+    heritage: "{{ .Release.Service }}"
+spec:
+  ports:
+  - port: 3306
+    name: mysql-port
+  clusterIP: None
+  selector:
+    component: {{ template "percona.fullname" . }}-nodes
+{{ if .Values.proxysql.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: {{ template "percona.fullname" . }}
+    chart: "{{ .Chart.Name }}-{{ .Chart.Version }}"
+    release: "{{ .Release.Name }}"
+    heritage: "{{ .Release.Service }}"
+  name: "{{ template "percona.fullname" . }}-proxysql"
+spec:
+  ports:
+    - name: mysql
+      port: 3306
+      protocol: TCP
+      targetPort: 3306
+    - name: proxyadm
+      port: 6032
+      protocol: TCP
+      targetPort: 6032
+  selector:
+    component: {{ template "percona.fullname" . }}-proxysql
+{{ end }}

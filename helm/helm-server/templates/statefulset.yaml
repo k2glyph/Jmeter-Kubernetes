@@ -1,0 +1,266 @@
+apiVersion: apps/v1beta2
+kind: StatefulSet
+metadata:
+  name: {{ template "percona.fullname" . }}-node
+  labels:
+    app: {{ template "percona.fullname" . }}
+    chart: "{{ .Chart.Name }}-{{ .Chart.Version }}"
+    release: "{{ .Release.Name }}"
+    heritage: "{{ .Release.Service }}"
+    component: {{ template "percona.fullname" . }}-nodes
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      component: {{ template "percona.fullname" . }}-nodes
+  serviceName: "{{ template "percona.fullname" . }}-nodes"
+  template:
+    metadata:
+      labels:
+        component: {{ template "percona.fullname" . }}-nodes
+    spec:
+      securityContext:
+        supplementalGroups: [99]
+{{ if eq .Values.platform "kubernetes" }}
+        fsGroup: 1001
+{{ end }}
+{{ if eq .Values.kind "cluster" }}
+{{- if .Values.persistence.restoreBackup }}
+      initContainers:
+      - name: restore-mysql
+        image: perconalab/backupjob-openshift
+        command:
+        - bash
+        - "-c"
+        - |
+          set -ex
+          cd /var/lib/mysql
+          rm -fr *
+          cat /backup/$BACKUPSRC/xtrabackup.stream | xbstream -x
+          xtrabackup --prepare --target-dir=/var/lib/mysql
+        env:
+          - name: BACKUPSRC
+            value: {{ .Values.persistence.backupDir | quote }}
+        volumeMounts:
+        - name: backup
+          mountPath: /backup
+        - name: datadir
+          mountPath: /var/lib/mysql
+{{ end }}
+      containers:
+      - name: node
+        image: "{{ .Values.imageRepo }}:{{ .Values.imageTag }}"
+        imagePullPolicy: {{ .Values.imagePullPolicy | quote }}
+        resources:
+{{ toYaml .Values.resources | indent 10 }}
+        ports:
+        - containerPort: 3306
+          name: mysql
+        readinessProbe:
+          exec:
+            command:
+            - /usr/bin/clustercheck.sh
+          initialDelaySeconds: 15
+          timeoutSeconds: 15
+          periodSeconds: 30
+          failureThreshold: 5
+        livenessProbe:
+          exec:
+            command:
+            - /usr/bin/clustercheck.sh
+          initialDelaySeconds: 300
+          timeoutSeconds: 5
+          periodSeconds: 10
+{{ else }}
+      initContainers:
+      - name: clone-mysql
+        image: perconalab/percona-rs
+        command: ["/bin/bash","/usr/bin/init-datadir.sh"]
+   {{- if .Values.persistence.initdatadir }}
+        env:
+        - name: MYSQL_INIT_DATADIR
+          value: "true"
+    {{ end }}
+        volumeMounts:
+        - name: datadir
+          mountPath: /var/lib/mysql
+        - name: config-volume
+          mountPath: /etc/mysql/conf.d
+      containers:
+      - name: mysql
+        image:  perconalab/percona-rs
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 3306
+          name: mysql
+        readinessProbe:
+          exec:
+            command: ["/usr/bin/mysqlcheck.sh"]
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          exec:
+            command: ["/usr/bin/mysqlcheck.sh"]
+          initialDelaySeconds: 5
+          periodSeconds: 2
+          timeoutSeconds: 1
+{{ end }} 
+        env:
+   {{- if .Values.persistence.initdatadir }}
+        - name: MYSQL_INIT_DATADIR
+          value: "true"
+    {{ end }}
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ template "percona.fullname" . }}-secrets
+              key: root
+        - name: XTRABACKUP_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ template "percona.fullname" . }}-secrets
+              key: xtrabackup
+        - name: MONITOR_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ template "percona.fullname" . }}-secrets
+              key: monitor
+        - name: CLUSTERCHECK_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ template "percona.fullname" . }}-secrets
+              key: clustercheck
+        volumeMounts:
+        - name: datadir
+          mountPath: /var/lib/mysql
+        - name: config-volume
+          mountPath: /etc/mysql/conf.d/
+      {{- if .Values.pmm.enabled }}
+      - name: pmm-client
+        image: perconalab/pmm-client
+        imagePullPolicy: Always
+        env:
+        - name: PMM_SERVER
+          value: {{ .Values.pmm.service }}
+        - name: DB_TYPE
+          value: mysql
+        - name: DB_USER
+          value: root
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ template "percona.fullname" . }}-secrets
+              key: root
+        volumeMounts:
+        - name: datadir
+          mountPath: /var/lib/mysql
+      {{- end }}
+      volumes:
+      - name: config-volume
+        configMap:
+          name: {{ template "percona.fullname" . }}
+          optional: true
+{{- if .Values.persistence.restoreBackup }}
+      - name: backup
+        persistentVolumeClaim:
+          claimName: backup-volume
+{{- end }}
+      {{- if .Values.persistence.enabled }}
+  volumeClaimTemplates:
+  - metadata:
+      name: datadir
+    spec:
+      accessModes: [ {{ .Values.persistence.accessMode | quote }} ]
+      resources:
+        requests:
+          storage: {{ .Values.persistence.size }}
+      {{- else }}
+      - name: datadir
+        hostPath:
+          path: "/mnt/disks/ssd0"
+      {{- end }}
+{{- if .Values.proxysql.enabled }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ template "percona.fullname" . }}-proxysql
+  labels:
+    app: {{ template "percona.fullname" . }}
+    chart: "{{ .Chart.Name }}-{{ .Chart.Version }}"
+    release: "{{ .Release.Name }}"
+    heritage: "{{ .Release.Service }}"
+    component: {{ template "percona.fullname" . }}-proxysql
+spec:
+  serviceName: "{{ template "percona.fullname" . }}-proxysql"
+  replicas: 1
+  selector:
+    matchLabels:
+      component: {{ template "percona.fullname" . }}-proxysql
+  template:
+    metadata:
+      labels:
+        component: {{ template "percona.fullname" . }}-proxysql
+    spec:
+      securityContext:
+        supplementalGroups: [99]
+{{ if eq .Values.platform "kubernetes" }}
+        fsGroup: 1001
+{{ end }}
+      containers:
+      - name: proxysql
+        image:  perconalab/proxysql-openshift:{{ .Values.imageProxySQLTag }}
+        imagePullPolicy: {{ .Values.imagePullPolicy | quote }}
+        ports:
+        - containerPort: 3306
+          name: mysql
+        - containerPort: 6032
+          name: proxyadm
+        volumeMounts:
+        - name: proxydata
+          mountPath: /var/lib/proxysql
+          subPath: data
+        resources:
+{{ toYaml .Values.resources | indent 10 }}
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+              secretKeyRef:
+                name: {{ template "percona.fullname" . }}-secrets
+                key: root
+        - name: MYSQL_PROXY_USER
+          value: "proxyuser"
+        - name: MYSQL_PROXY_PASSWORD
+          valueFrom:
+              secretKeyRef:
+                name: {{ template "percona.fullname" . }}-secrets
+                key: proxyuser
+        - name: MONITOR_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ template "percona.fullname" . }}-secrets
+              key: monitor
+        - name: PXCSERVICE
+          value: "{{ template "percona.fullname" . }}-nodes"
+      {{- if .Values.pmm.enabled }}
+      - name: pmm-client
+        image: perconalab/pmm-client
+        imagePullPolicy: Always
+        env:
+        - name: PMM_SERVER
+          value: {{ .Values.pmm.service }}
+        - name: DB_TYPE
+          value: proxysql
+        - name: DB_ARGS
+          value: --dsn admin:admin@tcp(localhost:6032)/
+      {{- end }}
+  volumeClaimTemplates:
+  - metadata:
+      name: proxydata
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 2Gi
+{{- end }}

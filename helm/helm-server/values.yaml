@@ -1,0 +1,63 @@
+## percona image version
+## ref: https://hub.docker.com/r/library/percona/tags/
+##
+
+nameOverride: "restore1"
+
+## A choice between "cluster" and "replicaset"
+kind: "cluster"
+
+## A choice between "kubernetes" and "openshift"
+platform: "openshift"
+
+imageRepo: "perconalab/pxc-openshift"
+imageTag: "latest"
+imageProxySQLTag: "latest"
+replicas: 3
+
+## Specify an imagePullPolicy (Required)
+## It's recommended to change this to 'Always' if the image tag is 'latest'
+## ref: http://kubernetes.io/docs/user-guide/images/#updating-images
+##
+imagePullPolicy: Always
+
+## !!!! Change passwords to secure ones !!!!
+passwords:
+  mysqlroot: "secr3t"
+  xtrabackup: "secr3t"
+  monitor: "secr3t"
+  clustercheck: "secr3t"
+  proxyuser: "secr3t"
+
+pmm:
+  enabled: false
+  service: "monitoring-service"
+
+proxysql:
+  enabled: true
+
+## Persist data to a persitent volume
+persistence:
+  enabled: true
+  ## percona data Persistent Volume Storage Class
+  ## If defined, storageClassName: <storageClass>
+  ## If set to "-", storageClassName: "", which disables dynamic provisioning
+  ## If undefined (the default) or set to null, no storageClassName spec is
+  ##   set, choosing the default provisioner.  (gp2 on AWS, standard on
+  ##   GKE, AWS & OpenStack)
+  ##
+  # storageClass: "-"
+  accessMode: ReadWriteOnce
+  size: 8Gi
+  
+  # if you changed passwords - you need to re-init datadir, otherwise passwords will stay the same
+  initdatadir: false
+  restoreBackup: false
+  backupDir: ""
+## Configure resource requests and limits
+## ref: http://kubernetes.io/docs/user-guide/compute-resources/
+##
+resources:
+  requests:
+    memory: 256Mi
+    cpu: 100m
