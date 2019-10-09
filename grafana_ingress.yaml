@@ -4,18 +4,18 @@ metadata:
   name: grafana-ingress
   annotations:
     kubernetes.io/ingress.class: "nginx"
-    certmanager.k8s.io/cluster-issuer: letsencrypt-staging
+    certmanager.k8s.io/cluster-issuer: letsencrypt-prod
     certmanager.k8s.io/acme-challenge-type: http01
 spec:
   tls:
     - hosts:
-      - grafana.104.155.172.128.xip.io
+      - monitor.cicd.auzmor.com
       secretName: grafana-cicd-auzmor-tls
   rules:
-    - host: grafana.104.155.172.128.xip.io
+    - host: monitor.cicd.auzmor.com
       http:
         paths:
           - path: /
             backend:
               serviceName: grafana
-              servicePort: 3000
+              servicePort: 80
